@@ -1,0 +1,70 @@
+BSD 3-Clause License
+
+Copyright (c) 2026, Tak Ho Alex Li and contributors.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+---------------------------------------------------------------------------
+HONESTY CLAUSES (non-severable disclosures, retained per project policy;
+aligned with migration notes v2.1):
+
+1. The attacker budget vector is printed alongside every readout; a
+   readout without its budget is not interpretable. A single-shard
+   readout decrease is not privacy (attacker-capacity dilution) —
+   report the collusive ceiling max_C R(C) with the budget.
+2. The 9-bit attacker ceiling is open (0.36 -> 0.42 -> 0.47 and rising
+   with decoder capacity); every AMBER report carries a freshness label.
+3. Entity-level recovery is measured at mechanism level on synthetic
+   clinical notes only; real hospital PHI distributions remain untested.
+4. Corpus x scale x family is confirmed at measured points (AG News /
+   DBpedia / synthetic medical x 124M / 355M / Llama-1B); the ambient
+   anchor varies with model scale, corpus, and family (Llama-1B:
+   0.415) — per-deployment calibration is mandatory.
+5. Label (R2) leakage is not reduced by bitrate: a 9-bit seam that
+   reduces token recovery leaves label gist exposed. Class-is-sensitive
+   deployments stay at RED.
+6. This tool measures risk; it does not eliminate it. The remedy for a
+   RED verdict is TEE, local inference, or not egressing at all.
+7. AMBER boundary: 9-bit egress is applicable only when (a) the label
+   is non-sensitive, (b) task output carries no sensitive content,
+   (c) codebook statistics do not fingerprint the customer population,
+   and (d) data volume makes local inference impractical. Ranking,
+   credit-scoring, and diagnosis-class workloads are RED.
+8. Detection granularity: certification is deployment-level, not
+   query-level. One audit (about 2 GPU-hours) covers all queries under
+   the same head and quantization configuration; quarterly re-audit
+   (~30 min) plus event-triggered re-audit.
+9. Codebook side channel: a 9-bit VQ codebook leaving the trust domain
+   adds no token-recovery risk (measured), but its vector distribution
+   may leak statistical properties of the training data — evaluate
+   codebook statistical leakage, or fit the codebook on generic corpora.
+10. Scope and variance: closed-source LLM scenarios are out of scope
+   (there is no intermediate representation to measure). Probe
+   training carries ~7pp run-to-run variance (exp18b); multi-seed
+   averaging is mandatory before verdicts, and single-seed readouts
+   with a large t5-t1 gap are refused (INCONCLUSIVE).

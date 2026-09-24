@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev]" datasets
+      - name: Layer 1-2 tests (fast, synthetic; slow model tests deselected)
+        run: pytest -m "not slow" -v
+      - name: Package sanity
+        run: |
+          python -c "import splitrisk; print(splitrisk.__version__)"
+          splitrisk --version
+          splitrisk presets
+
+  slow:
+    # Full smoke on a real (tiny) checkpoint — weekly + on release.
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && contains(github.ref, 'tag')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev]" datasets
+      - name: Slow tests (real configs/checkpoints)
+        run: pytest -m slow -v --timeout=600
+        continue-on-error: true   # network-dependent; not a release gate

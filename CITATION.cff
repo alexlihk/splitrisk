@@ -1,0 +1,35 @@
+cff-version: 1.2.0
+title: >-
+  Split-Learning and Split-Inference Privacy Defenses Fail Under Strong
+  Attackers: A Metric-Agnostic Dual-Track Empirical Audit of
+  Representation Leakage
+message: >-
+  If you use SplitRisk, please cite the companion paper.
+authors:
+  - family-names: Li
+    given-names: Tak Ho Alex
+    email: alexlihk@hotmail.com
+  - family-names: Liu
+    given-names: Kaijie
+  - family-names: Chen
+    given-names: Hui
+  - family-names: Lee
+    given-names: Lik-Hang
+  - family-names: Ho
+    given-names: Kin Chung
+  - family-names: Shum
+    given-names: Ping
+  - family-names: Ng
+    given-names: Michael K.
+    email: mkng@hkbu.edu.hk
+doi: 10.13140/RG.2.2.32481.67681
+version: 0.2.1
+date-released: "2026-09-25"
+license: BSD-3-Clause
+repository-code: "https://github.com/alexlihk/splitrisk"
+keywords:
+  - split learning
+  - split inference
+  - reconstruction attack
+  - privacy audit
+  - SA-RI
