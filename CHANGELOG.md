@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.3.0 (unreleased — code complete, H20 validation queued)
+- **AutoSplitter** (`splitting.py`): generic decoder-only split via the
+  official model API — covers llama-family structures (Llama/Qwen2/
+  Mistral/Gemma/Yi) alongside gpt2; every split passes mandatory
+  parity (Δlogits<2e-2) and causal-leak (Δprefix<1e-3) gates.
+- **SL training-loop audit** (`sl.py`, `audit_sl()`): classic SL loop
+  (client head → smash → server tail → gradient return, PyTorch 2.x
+  explicit detach) with honest / SIA (α·token-CE bridge) / FSHA
+  (bridge removed) baselines — exp13 productized. SIA = task normal +
+  full recovery → R6.
+- **SplitFed** head-FedAvg simulation (`splitfed()`).
+- **R2 label-leakage probe** (`label_audit()`): representation→label
+  classifier readout with random baseline; label gist survives
+  quantization (0.859 vs 0.871) — class-is-sensitive stays RED.
+- Multi-seed CE probe averaging (`n_seeds`) per exp18b ~7pp variance.
+- Task head normalized: classification head reads tail **hidden
+  states** (previous path read vocab logits — task_acc was meaningless).
+- Tail wpe zero-copy (official inputs_embeds path re-adds wpe), head
+  ln_f/norm moved to tail side (bug-ledger convention enforced by gates).
+- Calibration runner for GPU validation: `scripts/h20_stage.py`
+  (S1-S8, resumable, per-stage JSON) + docs/H20_RUNBOOK.md.
+- `audit_training` accepts explicit split_at/n_train.
+
 ## 0.2.1 (2026-09-25)
 - gpt2-large anchor corrected to the **exp18b 5-config mean (0.907)**
   (single-seed 0.845 documented as a ~7pp run-to-run outlier); probe

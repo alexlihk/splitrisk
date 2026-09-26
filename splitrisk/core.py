@@ -9,14 +9,17 @@ import numpy as np
 import torch
 
 from .report import AuditResult
-from .probes.probe_common import load_gpt2, Head, Tail
+from .splitting import AutoSplitter, gates
+from .probes.probe_common import load_gpt2
 from .probes.train_cf_attacker import train_probe, probe_readout
 from .probes.raw_floor import raw_floor
 from .probes.reassembler import train_reassembler
+from .probes.label_probe import label_audit
 from .vq.vq_cell import VQCell
 
-SUPPORTED_MODELS = ("gpt2", "gpt2-medium", "gpt2-large")
-SEED_OFFSETS = {"classification": 1000, "lm": 2000}
+# 錨點表已校準、可簽章的模型（audit() 名稱路徑的白名單）
+SUPPORTED_MODELS = ("gpt2", "gpt2-medium", "gpt2-large",
+                    "llama-3.2-1b")
 
 
 def _device(device):
@@ -95,47 +98,6 @@ def _cache_split_reprs(head, input_ids, attention_mask, device,
     return torch.cat(zs)
 
 
-def _finetune_task(head, tail, input_ids, attention_mask, labels, device,
-                   epochs=1, lr=1e-4, batch_size=32, seed=0):
-    """Joint head+tail fine-tuning on the main task (server side)."""
-    torch.manual_seed(seed)
-    head, tail = head.to(device), tail.to(device)
-    # head and tail share wte/wpe with the source model — dedupe by
-    # parameter id or AdamW double-counts them
-    seen = {}
-    for m in (head, tail):
-        for p in m.parameters():
-            if p.requires_grad:
-                seen.setdefault(id(p), p)
-    params = list(seen.values())
-    opt = torch.optim.AdamW(params, lr=lr)
-    lossf = torch.nn.CrossEntropyLoss()
-    n = input_ids.shape[0]
-    for _ in range(max(1, epochs)):
-        for i in range(0, n, batch_size):
-            ids = input_ids[i:i + batch_size].to(device)
-            am = attention_mask[i:i + batch_size].to(device)
-            y = labels[i:i + batch_size].to(device)
-            z = head(ids, am)
-            logits = tail(z, am)
-            loss = lossf(logits[:, 0, :], y)
-            opt.zero_grad()
-            loss.backward()
-            opt.step()
-    return head, tail
-
-
-@torch.no_grad()
-def _task_acc(tail, z, labels, device, batch_size=128):
-    tail = tail.to(device).eval()
-    correct = 0
-    for i in range(0, z.shape[0], batch_size):
-        logits = tail(z[i:i + batch_size].to(device))
-        pred = logits[:, 0, :].argmax(-1)
-        correct += (pred.cpu() == labels[i:i + batch_size]).sum().item()
-    return correct / max(1, z.shape[0])
-
-
 @torch.no_grad()
 def _ambient(full_model, input_ids, attention_mask, device,
              batch_size=64):
@@ -159,13 +121,22 @@ def _ambient(full_model, input_ids, attention_mask, device,
 def _prepare(model, split_at, task, data, n_train, n_test, seed,
              device, head=None, labels=None, text_column=None,
              label_column=None, max_len=64):
-    """Shared setup: model, tokenizer, encoded data, cached z."""
+    """Shared setup: model, tokenizer, encoded data, cached z.
+    v0.3: AutoSplitter（gpt2 + llama 家族結構）；ambient 在微調「前」測
+    （保證是 pretrained prior，不被共享權重微調污染）；分類任務建
+    ClsHead 任務橋（hidden states → 類別，非 vocab logits）。"""
     from transformers import AutoTokenizer
+    from .sl import ClsHead
     dev = _device(device)
+    if model is None and head is not None:
+        model = getattr(head, "base_model", None)
+        if model is None:
+            raise ValueError(
+                "custom head 需暴露 .base_model（完整模型，供 wte/"
+                "ambient/parity）——probe_common.Head 自帶；自寫 head 請補")
     full = load_gpt2(model, device=dev) if isinstance(model, str) \
         else model.to(dev)
-    tok = AutoTokenizer.from_pretrained(
-        "gpt2" if isinstance(model, str) else "gpt2")
+    tok = AutoTokenizer.from_pretrained("gpt2")
     tok.pad_token = tok.eos_token
 
     texts_tr, texts_te, y_tr, y_te = _load_data(
@@ -176,74 +147,175 @@ def _prepare(model, split_at, task, data, n_train, n_test, seed,
     ids_tr, am_tr = _encode(texts_tr, tok, max_len)
     ids_te, am_te = _encode(texts_te, tok, max_len)
 
-    head = head if head is not None else Head(full, split_at)
-    tail = Tail(full, split_at)
-    tail.freeze_position_embedding()
+    # ambient 先測（微調前）——它必須是「不掌握部署」的攻擊者先驗
+    pctx = _ambient(full, ids_te, am_te, dev)
 
+    if head is None:
+        head, tail, full = AutoSplitter.load(full, split_at, device=dev)
+    else:
+        head = head.to(dev)
+        tail = AutoSplitter.load(full, split_at, device=dev)[1]
+
+    cls = None
+    y_tr_t = y_te_t = None
     if task == "classification" and y_tr is not None:
         y_tr_t = torch.tensor(y_tr, dtype=torch.long)
         y_te_t = torch.tensor(y_te, dtype=torch.long)
-        head, tail = _finetune_task(head, tail, ids_tr, am_tr, y_tr_t,
-                                    dev, seed=seed)
-    else:
-        y_tr_t = y_te_t = None
+        n_cls = int(max(y_tr_t.max().item(), y_te_t.max().item())) + 1
+        cls = ClsHead(head.hidden_size, n_cls).to(dev)
+        head, tail, cls = _finetune_task(head, tail, cls, ids_tr, am_tr,
+                                         y_tr_t, dev, seed=seed)
 
     z_te = _cache_split_reprs(head, ids_te, am_te, dev)
-    # CE/MSE probes train on the ground-truth token identity of the
-    # transmitted positions (padding positions excluded with -100)
     tgt_te = ids_te.clone()
     tgt_te[am_te == 0] = -100
-    return dict(full=full, tok=tok, head=head, tail=tail, dev=dev,
+    return dict(full=full, tok=tok, head=head, tail=tail, cls=cls, dev=dev,
                 ids_te=ids_te, am_te=am_te, z_te=z_te, tgt_te=tgt_te,
-                y_te=y_te_t, n_layers=full.config.n_layer)
+                y_te=y_te_t, n_layers=_n_layers(full),
+                wte=full.get_output_embeddings().weight, pctx=pctx)
+
+
+def _n_layers(full):
+    cfg = full.config
+    return getattr(cfg, "n_layer", None) or getattr(cfg,
+                                                    "num_hidden_layers", 0)
+
+
+def _finetune_task(head, tail, cls, input_ids, attention_mask, labels,
+                   device, epochs=1, lr=1e-4, batch_size=32, seed=0):
+    """joint head+tail+cls 微調：任務頭吃 tail 的 hidden states。"""
+    torch.manual_seed(seed)
+    head, tail, cls = head.to(device), tail.to(device), cls.to(device)
+    head.train()
+    tail.train()
+    cls.train()
+    seen = {}
+    for m in (head, tail, cls):
+        for p_ in m.parameters():
+            if p_.requires_grad:
+                seen.setdefault(id(p_), p_)
+    opt = torch.optim.AdamW(list(seen.values()), lr=lr)
+    lossf = torch.nn.CrossEntropyLoss()
+    n = input_ids.shape[0]
+    for _ in range(max(1, epochs)):
+        perm = torch.randperm(n)
+        for i in range(0, n, batch_size):
+            idx = perm[i:i + batch_size]
+            ids = input_ids[idx].to(device)
+            am = attention_mask[idx].to(device)
+            y = labels[idx].to(device)
+            z = head(ids, am)
+            h = tail.hidden_states(z, am)
+            loss = lossf(cls(h, am), y)
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+    head.eval()
+    tail.eval()
+    cls.eval()
+    return head, tail, cls
+
+
+@torch.no_grad()
+def _task_acc(tail, cls, z, attention_mask, labels, device, batch_size=128):
+    tail = tail.to(device).eval()
+    cls = cls.to(device).eval()
+    preds = []
+    for i in range(0, z.shape[0], batch_size):
+        h = tail.hidden_states(z[i:i + batch_size].to(device),
+                               attention_mask[i:i + batch_size].to(device))
+        preds.append(cls(h, attention_mask[i:i + batch_size].to(device))
+                     .argmax(-1).cpu())
+    return (torch.cat(preds) == labels).float().mean().item()
 
 
 # ------------------------------------------------------------ audits
 def audit(model="gpt2", split_at=6, task="classification", data="ag_news",
           head=None, labels=None, text_column=None, label_column=None,
           n_train=5000, n_test=1000, seed=1006, probe_hidden=None,
-          epochs=2, lr=1e-3, device=None):
-    """Full audit of a split deployment (inference track)."""
+          epochs=2, lr=1e-3, device=None, n_seeds=1):
+    """Full audit of a split deployment (inference track).
+
+    v0.3: AutoSplitter 支持 gpt2 家族與 llama 家族結構（Llama/Qwen2/
+    Mistral/Gemma 等官方 API 截層）；雙閘門（parity+causal）不過即 raise；
+    n_seeds>=2 時 CE 探針多 seed 平均（exp18b 方差協議）；分類任務附 R2
+    標籤洩漏讀數。錨點表未列的 (model, corpus) 組合，verdict 會附
+    「未校準」提示——簽章前必須完成 per-deployment 校準。"""
     if model is None and head is None:
         raise ValueError("audit needs either a model name or a head")
-    if model is not None and not str(model).startswith(("gpt2",)):
-        # limited support list; bring-your-own head otherwise
+    if model is not None and not (
+            str(model).startswith("gpt2")
+            or str(model) in SUPPORTED_MODELS):
         raise ValueError(
-            f"model {model!r} is not in the calibrated support list "
-            f"{SUPPORTED_MODELS}; pass a custom `head` instead "
-            f"(audit_custom_head).")
+            f"model {model!r} 不在錨點表支持列表 {SUPPORTED_MODELS}。"
+            f"未校準模型請走 audit_custom_head（讀數可出、verdict/簽章"
+            f"需先完成 per-deployment 校準）。")
     p = _prepare(model, split_at, task, data, n_train, n_test, seed,
                  device, head=head, labels=labels,
                  text_column=text_column, label_column=label_column)
-    dev, dim = p["dev"], p["z_te"].shape[-1]
+    dev = p["dev"]
+    dim = p["z_te"].shape[-1]
     if probe_hidden is None:
-        probe_hidden = auto_probe_hidden(model if isinstance(model, str)
-                                         else model)
-    wte = p["full"].transformer.wte.weight
+        probe_hidden = max(2048, 2 * dim)   # 由表徵維度決定（custom-head 亦通）
+    wte = p["wte"]
 
-    ce = train_probe(p["z_te"], p["tgt_te"], wte, mode="ce",
-                     hidden=probe_hidden, epochs=epochs, lr=lr,
-                     device=dev, seed=seed)
-    t1, t5 = probe_readout(ce, p["z_te"], p["tgt_te"], wte, mask=p["am_te"],
-                           device=dev)
+    # 強制關卡：骨架病變不許離開管線（gpt2/llama 皆檢）
+    par_d, leak_d = gates(p["head"], p["tail"], p["full"], dev)
+    extra = {"parity_max_diff": par_d, "causal_leak_max": leak_d,
+             "probe_seeds": n_seeds if n_seeds > 1 else 1}
+
+    t1s, t5s = [], []
+    for i in range(max(1, n_seeds)):
+        ce = train_probe(p["z_te"], p["tgt_te"], wte, mode="ce",
+                         hidden=probe_hidden, epochs=epochs, lr=lr,
+                         device=dev, seed=seed + 4321 + i)
+        t1, t5 = probe_readout(ce, p["z_te"], p["tgt_te"], wte,
+                               mask=p["am_te"], device=dev)
+        t1s.append(t1)
+        t5s.append(t5)
+        del ce
+    t1 = float(np.mean(t1s))
+    t5 = float(np.mean(t5s))
+    if n_seeds > 1:
+        extra["t1_std"] = float(np.std(t1s))
+        extra["t5_std"] = float(np.std(t5s))
+
     mse = train_probe(p["z_te"], p["tgt_te"], wte, mode="mse",
                       hidden=probe_hidden, epochs=epochs, lr=lr,
-                      device=dev, seed=seed)
+                      device=dev, seed=seed + 5678)
     t1_mse, _ = probe_readout(mse, p["z_te"], p["tgt_te"], wte,
                               mask=p["am_te"], device=dev)
+    del mse
     fl = raw_floor(p["z_te"], p["tgt_te"], wte, mask=p["am_te"], device=dev)
-    pctx = _ambient(p["full"], p["ids_te"], p["am_te"], dev)
-    acc = _task_acc(p["tail"], p["z_te"], p["y_te"], dev) \
-        if p["y_te"] is not None else None
+    pctx = p["pctx"]
+    acc = _task_acc(p["tail"], p["cls"], p["z_te"], p["am_te"], p["y_te"],
+                    dev) if (p["y_te"] is not None and p["cls"]
+                             is not None) else None
+    if task == "classification" and p["y_te"] is not None:
+        extra.update(label_audit(p["z_te"], p["y_te"], p["am_te"],
+                                 n_classes=int(p["y_te"].max().item()) + 1,
+                                 device=dev, seed=seed))
 
+    caveats = ["Attacker ceiling is open: re-audit quarterly and on "
+               "new attack publications (freshness label required)."]
+    if model is None or not _is_calibrated(str(model), data):
+        caveats.append(
+            "Uncalibrated (model, corpus) pair: readouts are live "
+            "measurements, but verdict/signature requires per-deployment "
+            "anchor calibration (splitrisk anchors).")
     return AuditResult(
-        model=str(model), split_at=split_at, task=task, seed=seed,
+        model=str(model or "custom-head"), split_at=split_at, task=task,
+        seed=seed,
         t1_ce=t1, t5_ce=t5, floor=fl, pctx=pctx, t1_mse=t1_mse,
         task_acc=acc, probe_arch=f"MLP {dim}->{probe_hidden}->{probe_hidden}"
         f"->{dim} (GELU)", probe_hidden=probe_hidden,
-        n_train=n_train, epochs=epochs, lr=lr,
-        caveats=["Attacker ceiling is open: re-audit quarterly and on "
-                 "new attack publications (freshness label required)."])
+        n_train=n_train, epochs=epochs, lr=lr, extra=extra,
+        caveats=caveats)
+
+
+def _is_calibrated(model_name: str, corpus: str) -> bool:
+    from .calibration.anchors import CALIBRATION_TABLE
+    return (model_name, str(corpus)) in CALIBRATION_TABLE
 
 
 def audit_vq(model="gpt2", split_at=6, task="classification",
@@ -260,7 +332,7 @@ def audit_vq(model="gpt2", split_at=6, task="classification",
     dev = p["dev"]
     if probe_hidden is None:
         probe_hidden = auto_probe_hidden(model)
-    wte = p["full"].transformer.wte.weight
+    wte = p["wte"]
     cells = {}
     for k in codebook_sizes:
         vq = VQCell(p["z_te"].shape[-1], k, seed=seed)
@@ -300,7 +372,7 @@ def audit_sharded(model="gpt2", split_at=6, data="ag_news", n_shards=3,
     dev = p["dev"]
     if probe_hidden is None:
         probe_hidden = auto_probe_hidden(model)
-    wte = p["full"].transformer.wte.weight
+    wte = p["wte"]
     z, tgt, am = p["z_te"], p["tgt_te"], p["am_te"]
     n, t, d = z.shape
     shard_len = t // n_shards
@@ -335,39 +407,113 @@ def audit_sharded(model="gpt2", split_at=6, data="ag_news", n_shards=3,
 
 def audit_training(delivered_model, reference_data, task="classification",
                    n_test=1000, seed=1006, device=None, probe_hidden=None,
-                   epochs=2, lr=1e-3):
+                   epochs=2, lr=1e-3, split_at=6, n_train=None):
     """Training-track audit: CE probe on a delivered model version.
 
     Three signatures (exp13/13b): FSHA double-loss (task collapses),
     SIA stealth (task normal, recovery ~0.97 — only the CE probe
     detects it), R-M == S-M (leakage set by hijack intensity alpha).
+    v0.3: split_at / n_train 可指定（對齊被審計部署的真實切分與預算）。
     """
     dev = _device(device)
-    p = _prepare(delivered_model, split_at=6, task=task, data="ag_news",
-                 n_train=n_test, n_test=n_test, seed=seed, device=dev)
+    p = _prepare(delivered_model, split_at=split_at, task=task,
+                 data="ag_news", n_train=n_train or n_test, n_test=n_test,
+                 seed=seed, device=dev)
     if probe_hidden is None:
-        probe_hidden = auto_probe_hidden(
-            delivered_model if isinstance(delivered_model, str)
-            else "gpt2")
-    wte = p["full"].transformer.wte.weight
-    net = train_probe(p["z_te"], p["tgt_te"], wte, mode="ce",
+        probe_hidden = max(2048, 2 * p["z_te"].shape[-1])
+    net = train_probe(p["z_te"], p["tgt_te"], p["wte"], mode="ce",
                       hidden=probe_hidden, epochs=epochs, lr=lr,
                       device=dev, seed=seed)
-    t1, t5 = probe_readout(net, p["z_te"], p["tgt_te"], wte,
+    t1, t5 = probe_readout(net, p["z_te"], p["tgt_te"], p["wte"],
                            mask=p["am_te"], device=dev)
     acc = _task_acc(p["tail"], p["z_te"], p["y_te"], dev) \
         if p["y_te"] is not None else None
     stealth = acc is not None and acc > 0.8 and t1 > 0.85
     return AuditResult(
-        model=str(delivered_model), split_at=6, task=task, seed=seed,
+        model=str(delivered_model), split_at=split_at, task=task, seed=seed,
         t1_ce=t1, t5_ce=t5, mode="training", task_acc=acc,
         probe_arch="MLP (CE)", probe_hidden=probe_hidden,
-        n_train=n_test, epochs=epochs, lr=lr,
+        n_train=n_train or n_test, epochs=epochs, lr=lr,
         caveats=["Task metrics are blind to SIA-style stealth hijacks; "
                  "only the CE probe sees it (R6 axis).",
                  "SIA DETECTED: task normal with full recovery — refuse "
                  "this model version." if stealth else
                  "No stealth signature detected in this readout."])
+
+
+def audit_sl(model="gpt2", split_at=6, data="ag_news", baseline="honest",
+             alpha=5.0, sl_epochs=1, sl_lr_head=1e-4, sl_lr_server=1e-4,
+             n_train=5000, n_test=1000, seed=1006, probe_hidden=None,
+             att_epochs=2, device=None, n_seeds=1):
+    """SL 訓練環審計（exp13 產品化）：跑 honest/sia/fsha 訓練環後對傳輸
+    表徵出 CE 探針讀數。SIA 隱蔽 signature 驗收：任務正常而 t1 高（R6 軸）；
+    FSHA：任務崩塌（易偵測）。對照三 baseline 用同參數各跑一次。"""
+    assert baseline in ("honest", "sia", "fsha"), baseline
+    from .sl import train_split, eval_split
+    from torch.utils.data import DataLoader, TensorDataset
+    dev = _device(device)
+    p = _prepare(model, split_at, "classification", data, n_train, n_test,
+                 seed, dev)
+    dim = p["z_te"].shape[-1]
+    if probe_hidden is None:
+        probe_hidden = max(2048, 2 * dim)
+    wte = p["wte"]
+    if p["y_te"] is None:
+        raise ValueError("audit_sl 需要 classification 任務（帶標籤）")
+
+    # 訓練側編碼（_prepare 只快取 test 側）
+    texts_tr, _, y_tr, _ = _load_data(data, "classification", p["tok"],
+                                      n_train, 0)
+    ids_tr, am_tr = _encode(texts_tr, p["tok"], 64)
+    y_tr_t = torch.tensor(y_tr, dtype=torch.long)
+
+    import copy
+    head_sl = copy.deepcopy(p["head"])
+    tail_sl = copy.deepcopy(p["tail"])
+    from .sl import ClsHead
+    cls_sl = ClsHead(dim, int(p["y_te"].max().item()) + 1).to(dev)
+    loader = DataLoader(TensorDataset(ids_tr, am_tr.bool(), y_tr_t),
+                        batch_size=32, shuffle=True)
+    stats = train_split(head_sl, tail_sl, cls_sl, loader, wte,
+                        baseline=baseline, alpha=alpha, epochs=sl_epochs,
+                        lr_head=sl_lr_head, lr_server=sl_lr_server,
+                        log_every=100, device=dev, seed=seed)
+    head_sl.eval()
+    tail_sl.eval()
+    cls_sl.eval()
+    z_te = _cache_split_reprs(head_sl, p["ids_te"], p["am_te"], dev)
+    tgt_te = p["tgt_te"]
+    t1s, t5s = [], []
+    for i in range(max(1, n_seeds)):
+        net = train_probe(z_te, tgt_te, wte, mode="ce",
+                          hidden=probe_hidden, epochs=att_epochs,
+                          device=dev, seed=seed + 4321 + i)
+        t1, t5 = probe_readout(net, z_te, tgt_te, wte, mask=p["am_te"],
+                               device=dev)
+        t1s.append(t1)
+        t5s.append(t5)
+    acc = eval_split(head_sl, tail_sl, cls_sl, p["ids_te"], p["am_te"],
+                     p["y_te"], dev)
+    extra = {"baseline": baseline, "alpha": alpha,
+             "sl_train_loss": stats["train_loss"],
+             "sl_hijack_loss": stats["hijack_loss"], "sl_steps":
+             stats["steps"]}
+    if n_seeds > 1:
+        extra["t1_std"] = float(np.std(t1s))
+    t1, t5 = float(np.mean(t1s)), float(np.mean(t5s))
+    r6 = (acc > 0.8 and t1 > 0.85)
+    return AuditResult(
+        model=str(model), split_at=split_at, task="classification",
+        seed=seed, t1_ce=t1, t5_ce=t5,
+        floor=raw_floor(z_te, tgt_te, wte, mask=p["am_te"], device=dev),
+        pctx=p["pctx"],
+        task_acc=acc, mode="sl", extra=extra,
+        probe_arch="MLP (CE)", probe_hidden=probe_hidden,
+        n_train=n_train, epochs=att_epochs, lr=1e-3,
+        caveats=(["SL 訓練環讀數——SIA 隱蔽 signature：任務正常而 t1 高"
+                  "（R6 軸），任務指標驗收會通過，唯 CE 探針可抓。"] if r6
+                 else ["SL 訓練環讀數——未見任務正常+滿洩漏並存 signature；"
+                       "對照三 baseline 請同參數各跑一次。"]))
 
 
 def _measure_anchors(model="gpt2", corpus="ag_news", device=None,
@@ -376,13 +522,12 @@ def _measure_anchors(model="gpt2", corpus="ag_news", device=None,
     p = _prepare(model, split_at, "classification", corpus, n_test,
                  n_test, seed, device)
     dev = p["dev"]
-    wte = p["full"].transformer.wte.weight
-    net = train_probe(p["z_te"], p["tgt_te"], wte, mode="ce",
+    net = train_probe(p["z_te"], p["tgt_te"], p["wte"], mode="ce",
                       hidden=auto_probe_hidden(model), epochs=2,
                       device=dev, seed=seed)
-    t1, _ = probe_readout(net, p["z_te"], p["tgt_te"], wte,
+    t1, _ = probe_readout(net, p["z_te"], p["tgt_te"], p["wte"],
                           mask=p["am_te"], device=dev)
-    fl = raw_floor(p["z_te"], p["tgt_te"], wte, mask=p["am_te"],
+    fl = raw_floor(p["z_te"], p["tgt_te"], p["wte"], mask=p["am_te"],
                    device=dev)
     pctx = _ambient(p["full"], p["ids_te"], p["am_te"], dev)
     return t1, pctx, fl

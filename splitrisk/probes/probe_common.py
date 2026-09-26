@@ -24,10 +24,14 @@ class Head(nn.Module):
         super().__init__()
         from transformers import GPT2Model
         tr = model.transformer
+        self.base_model = model                     # 供 custom-head 路徑引用
         self.inner = GPT2Model(model.config)
         self.inner.wte = tr.wte
         self.inner.wpe = tr.wpe
         self.inner.h = tr.h[:split_at]
+        # ln_f 屬於 tail 側（bug ledger 約定：Head=截層+ln_f=Identity）
+        # 否則新實例的 default LayerNorm(w=1,b=0) 會把 z 中途再標準化一次
+        self.inner.ln_f = torch.nn.Identity()
         self.split_at = split_at
         self.hidden_size = model.config.n_embd
 
@@ -45,25 +49,33 @@ class Tail(nn.Module):
 
     def __init__(self, model, split_at):
         super().__init__()
+        import copy
         from transformers import GPT2Model
         tr = model.transformer
         self.inner = GPT2Model(model.config)
         self.inner.wte = tr.wte
-        self.inner.wpe = tr.wpe
+        # wpe 用歸零副本：官方 forward 在 inputs_embeds 路徑仍會加 wpe，
+        # 而位置已在 head 側加過——這裡加零，保持語義不變（exp13 約定）
+        self.inner.wpe = copy.deepcopy(tr.wpe)
         self.inner.h = tr.h[split_at:]
+        self.inner.ln_f = tr.ln_f                   # 訓練過的 final norm 在這側
         self.lm_head = model.lm_head
         self.split_at = split_at
-        # wpe is zeroed and frozen: positions belong to the head side
-        self.inner.wpe.weight.requires_grad = False
-
-    def forward(self, z, attention_mask=None):
-        out = self.inner(inputs_embeds=z, attention_mask=attention_mask,
-                         use_cache=False)
-        return self.lm_head(out.last_hidden_state)   # post-ln_f
-
-    def freeze_position_embedding(self):
         with torch.no_grad():
             self.inner.wpe.weight.zero_()
+        self.inner.wpe.weight.requires_grad = False
+
+    def hidden_states(self, z, attention_mask=None):
+        """post-ln_f hidden states（任務頭用，非 vocab logits）。"""
+        out = self.inner(inputs_embeds=z, attention_mask=attention_mask,
+                         use_cache=False)
+        return out.last_hidden_state
+
+    def forward(self, z, attention_mask=None):
+        return self.lm_head(self.hidden_states(z, attention_mask))
+
+    def freeze_position_embedding(self):
+        pass  # wpe 已是歸零副本且凍結（__init__ 內完成；保留接口相容）
 
 
 def load_gpt2(name_or_model, device=None):

@@ -28,10 +28,10 @@ def test_cli_presets(capsys):
         assert name in out
 
 
-def test_cli_audit_rejects_unsupported_model():
+def test_cli_audit_rejects_uncalibrated_model():
     from splitrisk.cli import main
-    with pytest.raises(ValueError, match="support list"):
-        main(["audit", "--model", "llama-3.2-1b"])
+    with pytest.raises(ValueError, match="錨點表支持列表"):
+        main(["audit", "--model", "qwen-7b"])
 
 
 def test_probe_training_smoke():

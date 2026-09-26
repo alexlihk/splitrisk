@@ -91,6 +91,19 @@ these are reference points, not universal constants.
 | Zero information (collapsed codebook) | 0.030 |
 | Two-probe closure (9-bit VQ) | 0.469 ≈ 0.475 |
 
+## Coverage (expanding — see [ROADMAP.md](ROADMAP.md))
+
+| | v0.2.1 (live) | v0.3.0 (validating on H20) |
+|---|---|---|
+| Inference-track audit | ✅ gpt2 family | ✅ + llama-family models (Llama/Qwen2/Mistral/Gemma — parity-gated `AutoSplitter`) |
+| SL training-loop audit (honest / SIA / FSHA injection) | — | ✅ `audit_sl()` |
+| SplitFed simulation | — | ✅ `splitfed()` |
+| R2 label-leakage probe | — | ✅ `label_audit()` |
+| Multi-seed protocol (exp18b ~7pp variance) | manual | ✅ `n_seeds` built-in |
+
+Vision/tabular modality is research, not a feature — we don't ship
+recovery metrics without an oracle check.
+
 ## What SplitRisk does NOT do
 
 - It does **not** defend. It measures.
