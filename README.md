@@ -11,6 +11,10 @@
 > [splitaudit-battery](https://github.com/alexlihk/splitaudit-battery)
 > research artifact — it is a measurement tool, not new science.
 
+## The SA-RI specification
+
+Formal definitions — Safety(S;budget), six axes R1-R6, three-tier routing, 8×N cloud matrix, compliance mapping, training-track signatures, ten honesty clauses — are in the [Technical White Paper v3.3](docs/WHITEPAPER.md).
+
 ## What is this?
 
 When you deploy a model in split mode (early layers on client, rest on
