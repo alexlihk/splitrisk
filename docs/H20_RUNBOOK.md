@@ -1,6 +1,28 @@
 # H20 RUNBOOK — SplitRisk v0.3 校準/驗證排程（代跑指引）
-2026-09-25 · 對象：H20 代跑同學 · 單卡順序執行 · 全程可斷點續跑
+2026-09-25 · 對象：GPU 代跑同學 · 全程可斷點續跑 · 支持單卡順序或三卡並行
 總原則：**每個 stage 寫完 JSON 才算數**；錯了貼 traceback 給我們，不要自行改代碼。
+
+---
+
+## 0.5 三卡派工（3×4090，24GB 版）★已驗證的分配
+
+| 卡 | 指令（一行一段，可同時開三個終端） | 預估 | 顯存依據 |
+|---|---|---|---|
+| GPU0 | `CUDA_VISIBLE_DEVICES=0 python scripts/h20_stage.py --stage S1 && CUDA_VISIBLE_DEVICES=0 python scripts/h20_stage.py --stage S5` | 10min + 2.5h | gpt2 級 <4GB |
+| GPU1 | `CUDA_VISIBLE_DEVICES=1 python scripts/h20_stage.py --stage S2` | ~1.5h | Llama-1B full-FT 實測 5.4GB（T4 驗證過） |
+| GPU2 | `CUDA_VISIBLE_DEVICES=2 python scripts/h20_stage.py --stage S3` | ~1.5h | Qwen2-1.5B 類似量級 |
+| 接力 | GPU0 空出後：`--stage S6`；GPU1 空出後：`--stage S7` | 2.5h / 2.5h | Gemma-2-2b ~14GB ✅ |
+
+**顯存界線（為什麼 S4/S8 不上 4090）**：Mistral-7B 權重 bf16 已 14.4GB，
+full-FT（8 層 ≈2B 可訓參數）+ AdamW fp32 動量 ≈ **35GB > 24GB**。
+Llama-3.1-8B 同理 ~36GB。
+→ **S4 / S8 留給 H20（96GB）**，或等我們加 LoRA 變體再上 4090。
+
+三卡並行總牆鐘：**~3 小時跑完 S1/S2/S3/S5/S6/S7 六段**（含接力）。
+
+前置注意：S2（Llama）是 gated repo——跑前 `huggingface-cli login`，
+帳號需已申請 Meta 授權（網頁申請，通常即時批）。S3/S5/S6/S7 無門禁，
+可先跑。HF 匿名下載限流時設 `HF_TOKEN`。
 
 ---
 
