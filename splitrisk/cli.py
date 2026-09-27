@@ -60,6 +60,29 @@ def main(argv=None):
     ce.add_argument("--engagement", default="DUMMY PIPELINE")
     ce.add_argument("--out-prefix", required=True)
 
+    tr = sub.add_parser("training",
+                        help="Training-track audit (R6) on a delivered model")
+    tr.add_argument("--model", required=True, help="Delivered model (HF id)")
+    tr.add_argument("--split", type=int, default=6)
+    tr.add_argument("--n-test", type=int, default=1000)
+    tr.add_argument("--n-train", type=int, default=None)
+    tr.add_argument("--seed", type=int, default=1006)
+    tr.add_argument("--output", default=None, help="Save JSON report")
+
+    sla = sub.add_parser("sl", help="SL training-loop audit (honest/sia/fsha)")
+    sla.add_argument("--model", default="gpt2")
+    sla.add_argument("--split", type=int, default=6)
+    sla.add_argument("--data", default="ag_news")
+    sla.add_argument("--baseline", choices=["honest", "sia", "fsha"],
+                     default="honest")
+    sla.add_argument("--alpha", type=float, default=5.0)
+    sla.add_argument("--sl-epochs", type=int, default=1)
+    sla.add_argument("--n-train", type=int, default=5000)
+    sla.add_argument("--n-test", type=int, default=1000)
+    sla.add_argument("--seed", type=int, default=1006)
+    sla.add_argument("--n-seeds", type=int, default=1)
+    sla.add_argument("--output", default=None, help="Save JSON report")
+
     args = p.parse_args(argv)
 
     if args.version:
@@ -109,6 +132,26 @@ def main(argv=None):
         except CertifyRefused as e:
             print(f"[REFUSED] {e}")
             return 2
+    elif args.cmd == "training":
+        from splitrisk import audit_training
+        r = audit_training(delivered_model=args.model, split_at=args.split,
+                           n_test=args.n_test, n_train=args.n_train,
+                           seed=args.seed)
+        print(r.pretty())
+        if args.output:
+            r.to_json(args.output)
+            print(f"[saved] {args.output}")
+    elif args.cmd == "sl":
+        from splitrisk import audit_sl
+        r = audit_sl(model=args.model, split_at=args.split, data=args.data,
+                     baseline=args.baseline, alpha=args.alpha,
+                     sl_epochs=args.sl_epochs, n_train=args.n_train,
+                     n_test=args.n_test, seed=args.seed,
+                     n_seeds=args.n_seeds)
+        print(r.pretty())
+        if args.output:
+            r.to_json(args.output)
+            print(f"[saved] {args.output}")
     elif args.cmd == "presets":
         from splitrisk.presets import PRESETS
         if args.name:

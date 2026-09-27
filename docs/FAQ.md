@@ -1,5 +1,55 @@
 # FAQ
 
+## Closed-source LLMs: the four quadrants
+
+The boundary question is never "open or closed weights" — it is always:
+**does an intermediate representation cross a trust boundary?**
+
+| Quadrant | Scenario | Service |
+|---|---|---|
+| Q1 | Self-hosted open-weight model, split across trust domains | ✅ Full (signable) |
+| Q2 | Training outsourcing; delivered model is open-weight | ✅ Full (R6, signable after calibration) |
+| Q3 | Closed vendor exposes an **embedding endpoint** | ⚠️ Limited (inversion measurement, v2) |
+| Q4 | Closed chat/completion API only (plaintext in/out) | ❌ Not measurable — by anyone |
+
+**Q1.** `splitrisk anchors --model llama-3.2-1b` then
+`splitrisk audit --model llama-3.2-1b --split 8 --n-seeds 3`.
+
+**Q2 (delivered-model acceptance).**
+`splitrisk training --model <delivered> --split 6` — R6: task metrics are
+blind to SIA-style stealth hijacks (exp13: task 0.873 normal, recovery
+0.9695); only the CE probe sees it.
+
+**Q2 (SL training-loop audit).**
+`splitrisk sl --model gpt2 --split 6 --baseline sia` — run honest/sia/fsha
+with identical parameters: honest acc≈0.89/t1≈0.94 · SIA task normal +
+t1≥0.85 (caught) · FSHA acc<0.5 (collapses, self-exposes).
+
+**Q3.** Embeddings ARE an intermediate layer the vendor exposes to you.
+Inversion risk is measurable (vec2text lineage + SA-RI anchors). CLI is a
+v2 preview — not shipped; honesty first.
+
+**Q4.** The artifact crossing the boundary is plaintext — recovery is
+total by definition, so there is nothing to measure (governance =
+contracts, egress gateways, DLP). The tool refuses:
+
+```python
+>>> audit(model="gpt-4o", split_at=6)
+ValueError: model 'gpt-4o' 不在錨點表支持列表
+('gpt2', 'gpt2-medium', 'gpt2-large', 'llama-3.2-1b')。
+未校準模型請走 audit_custom_head（讀數可出、verdict/簽章
+需先完成 per-deployment 校準）。
+```
+
+That raise is honesty clause 10 in code: refusing to guess before making
+the sale. Signature boundary: signable = calibrated rows only; readings
+without verdict = uncalibrated; refusal = Q4 and any reduced-budget /
+large-variance run.
+
+See also: 宣傳包/06 for paste-ready samples per quadrant (internal doc).
+
+---
+
 See also [USERGUIDE.md](USERGUIDE.md#faq) for operational questions.
 
 ## Science
