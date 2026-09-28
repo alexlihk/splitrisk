@@ -66,8 +66,19 @@ def main():
     idx = rng.sample(range(len(ds)), min(args.n, len(ds)))
     texts = [ds[i]["text"][:400] for i in idx]
 
-    # --- vec2text 儀器 ---
+    # --- vec2text 儀器（self-heal: GitHub main 的 experiments.py 缺 import platform）---
     print("[vec2text] loading gtr-base encoder + gtr corrector...", flush=True)
+    import importlib.util
+    spec = importlib.util.find_spec("vec2text")
+    if spec:
+        exp_py = os.path.join(os.path.dirname(spec.origin), "experiments.py")
+        if os.path.exists(exp_py):
+            src = open(exp_py, encoding="utf-8").read()
+            if "import platform" not in src:
+                with open(exp_py, "w", encoding="utf-8") as f:
+                    f.write("import platform\n" + src)
+                print("[self-heal] patched experiments.py (missing 'import platform')",
+                      flush=True)
     import vec2text
     import transformers
     corpus_model, corpus_tokenizer, embedder = vec2text.models.load_encoder(
