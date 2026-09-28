@@ -55,6 +55,15 @@ def selfheal_vec2text():
                   flush=True)
 
 
+def selfinstall_deps():
+    """metric 依賴自動補裝（jiwer 缺失是 Colab 上的常見炸點）。"""
+    import importlib.util, subprocess, sys
+    if importlib.util.find_spec("jiwer") is None:
+        print("[self-install] installing jiwer...", flush=True)
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "jiwer"],
+                       check=False)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=500)
@@ -89,6 +98,7 @@ def main():
 
     # --- 儀器（self-heal 後 import）---
     selfheal_vec2text()
+    selfinstall_deps()          # jiwer 等 metric 依賴自動補裝（防呆）
     print("[vec2text] importing...", flush=True)
     import vec2text
     print(f"[vec2text] {getattr(vec2text, '__version__', '?')} "
