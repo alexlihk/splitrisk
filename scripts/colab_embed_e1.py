@@ -119,7 +119,7 @@ def main():
     f1m = hf_evaluate.load("f1")
     cerm = hf_evaluate.load("cer")
     import transformers
-    tok = transformers.AutoTokenizer.from_pretrained("gtr-base")
+    tok = corrector.embedder_tokenizer   # embedder 自帶 tokenizer（"gtr-base" 單獨不是有效 repo id）
     for bi in range(0, len(texts), args.batch):
         batch = texts[bi:bi + args.batch]
         rec = vec2text.invert_strings(
