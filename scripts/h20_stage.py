@@ -89,7 +89,7 @@ def stage_anchor(model, corpus, seeds, steps, device):
     wte = p["wte"]
     t1s, t5s = [], []
     for i in range(seeds):
-        net = train_probe(p["z_te"], p["tgt_te"], wte, mode="ce",
+        net = train_probe(p["z_tr"], p["tgt_tr"], wte, mode="ce",
                           hidden=hidden, epochs=2, device=device,
                           seed=1006 + 4321 + i)
         t1, t5 = probe_readout(net, p["z_te"], p["tgt_te"], wte,
@@ -199,9 +199,11 @@ def stage_s6(model, corpus, seeds, steps, device):
             train_split(local, p["tail"], cls,
                         [(shards[k][0], shards[k][1], shards[k][2])],
                         wte, baseline="honest", epochs=1,
-                        lr_head=1e-4, lr_server=5e-5, device=device,
-                        seed=1006 + r * 10 + k)
-            local_states.append(copy.deepcopy(local.state_dict()))
+                        lr_head=2e-5, lr_server=2e-5, device=device,
+                        seed=1006 + r * 10 + k, microbatch_size=8)
+            local_states.append({key: value.detach().cpu().clone()
+                                 for key, value in local.state_dict().items()})
+            del local
             print(f"  [fed r{r} client{k}] done", flush=True)
         avg = {key: torch.stack([s[key].float() for s in local_states])
                .mean(0) for key in local_states[0]}
@@ -211,10 +213,12 @@ def stage_s6(model, corpus, seeds, steps, device):
                                      if key in ref})
         global_head.eval()
     gh = global_head.to(device).eval()
-    z_te = _cache = None
     from splitrisk.core import _cache_split_reprs
+    z_tr = _cache_split_reprs(gh, p["ids_tr"], p["am_tr"], device)
+    tgt_tr = p["ids_tr"].clone()
+    tgt_tr[p["am_tr"] == 0] = -100
     z_te = _cache_split_reprs(gh, p["ids_te"], p["am_te"], device)
-    net = train_probe(z_te, p["tgt_te"], wte, mode="ce", epochs=2,
+    net = train_probe(z_tr, tgt_tr, wte, mode="ce", epochs=2,
                       device=device, seed=1006)
     t1, t5 = probe_readout(net, z_te, p["tgt_te"], wte, mask=p["am_te"],
                            device=device)

@@ -1,6 +1,32 @@
 # Changelog
 
-## 0.3.0 (unreleased — code complete, H20 validation queued)
+## 0.3.0 (2026-10-01 — H20 校準完成，錨點表跨四家族)
+
+- **H20 錨點校準完成**（8 stage，3 seeds，JSON 在 results/h20/）：
+  錨點表新增 Qwen2-1.5B（0.927/0.440/0.005）與 Gemma-2-2b
+  （0.852/0.449/0.765，floor 異常高＝gemma 嵌入幾何，已標註待複核）；
+  Llama-3.2-1B 實測行入表（0.870/0.415/0.204；P_ctx 與 exp19 的
+  0.4148 逐位對位＝跨協議互證）。S4 Mistral-7B / S8 Llama-3.1-8B
+  = REVIEW（探針對 7B+ 級 z 不收斂，z 衛生閘已加，按誠實協議暫緩入表）。
+- **探針協議修正（v0.3.2/v0.3.3）**：CE probe 訓練在 TRAIN 側表徵
+  （battery demo.py 原始協議）、評估在 test 側；bs 對齊 battery（32）。
+  修正前 probe 在 test 側自我訓練 4 步＝欠訓練儀器（讀數 0.04）。
+  本地驗證：gpt2 縮樣 t1=0.9573/t5=0.9794 落論文區間 0.94-0.97。
+- **AutoSplitter gemma adapter**（社區貢獻）：config 切片建真子模型
+  （layer_types 對齊 gemma2 sliding-window）＋Gemma 邊界 forward hook
+  （z=殘差流激活直接還原，免疫 embed-scaling 位置）＋final
+  logit softcapping。本地 random-Gemma2 parity Δ=0.0000。
+- **SL 環穩定性**：joint optimizer（head/tail 共享參數 dedup，單一
+  AdamW）＋client lr 2e-5（client-lr 掃描：≤5e-5 無損，1e-4 破壞性）。
+- **z 衛生閘**：_cache_split_reprs 對 NaN/Inf/極端尺度直接 raise 並附
+  統計（7B+ 模型 fp32 前向溢出的診斷數據源）。
+- **Q3 象限儀器預覽**（`splitrisk/embed.py`，`splitrisk embed`）：
+  閉源 embedding 端點池檢索攻擊測量——cosine top-1 vs 候選池、
+  run 內隨機配對地板、三檔 verdict（provisional v0）、誠實邊界
+  六條（endpoint+model 綁定保鮮/長度分桶強制/ToS 自查/UNSIGN）。
+  首個閉源端點實測：GLM embedding-3 池檢索超額 +0.203（¥0.2 查詢）。
+- 0.3.0a0 預告的全部分項（AutoSplitter/sl/splitfed/label_probe/
+  h20_stage）如約落地；本地 38 tests green。
 - **AutoSplitter** (`splitting.py`): generic decoder-only split via the
   official model API — covers llama-family structures (Llama/Qwen2/
   Mistral/Gemma/Yi) alongside gpt2; every split passes mandatory

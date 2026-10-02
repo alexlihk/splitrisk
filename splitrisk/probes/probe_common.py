@@ -82,7 +82,11 @@ def load_gpt2(name_or_model, device=None):
     """Accept a model name (HF hub) or an already-loaded model."""
     if isinstance(name_or_model, str):
         from transformers import AutoModelForCausalLM
-        model = AutoModelForCausalLM.from_pretrained(name_or_model)
+        import os
+        # v0.3.1: gated repo（Llama-3.1-8B 等）走 HF_TOKEN 環境變數——
+        # token 永不硬編（security red line；h20 S8 的 403 修法）
+        model = AutoModelForCausalLM.from_pretrained(
+            name_or_model, token=os.environ.get("HF_TOKEN") or None)
     else:
         model = name_or_model
     if device is not None:
@@ -106,7 +110,7 @@ class ReconNet(nn.Module):
         )
 
     def forward(self, z):
-        return self.net(z)
+        return self.net(z.float())
 
 
 def token_logits(z_recon, wte):

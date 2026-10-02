@@ -1,0 +1,29 @@
+{
+  "prereg": {
+    "purpose": "per-deployment anchor calibration (mistralai/Mistral-7B-v0.1 × ag_news)",
+    "seeds": 3,
+    "note": "full-info/ambient/floor; multi-seed mean per exp18b variance protocol (~7pp run-to-run)",
+    "probe_hidden": 8192
+  },
+  "result": {
+    "full_info_t1_mean": 0.04467883172465662,
+    "full_info_t1_std": 0.002329882845447499,
+    "full_info_t5_mean": 0.1099332055942553,
+    "ambient_pctx": 0.5169301460532794,
+    "floor": 0.0,
+    "per_seed_t1": [
+      0.0479737836434289,
+      0.04303135576527049,
+      0.04303135576527049
+    ],
+    "hidden": 4096,
+    "n_layers": 32,
+    "model_type": "mistral"
+  },
+  "verdict": "REVIEW — t1<0.85，人工判讀",
+  "done": true,
+  "stage": "S4",
+  "model": "mistralai/Mistral-7B-v0.1",
+  "corpus": "ag_news",
+  "minutes": 7.94143765370051
+}

@@ -10,7 +10,7 @@ from .probe_common import ReconNet
 
 
 def train_probe(z, token_ids, wte, mode="ce", hidden=None, epochs=2,
-                lr=1e-3, batch_size=256, device="cpu", seed=0):
+                lr=1e-3, batch_size=32, device="cpu", seed=0):
     """Train a probe on cached split representations.
 
     z:        (N, T, D) cached split-point representations
@@ -36,7 +36,7 @@ def train_probe(z, token_ids, wte, mode="ce", hidden=None, epochs=2,
             zb, tb = zb.to(device), tb.to(device)
             rec = net(zb)
             if mode == "ce":
-                logits = rec @ wte.t()
+                logits = rec @ wte.t().float()
                 loss = lossf(logits.reshape(-1, logits.shape[-1]),
                              tb.reshape(-1))
             else:
@@ -66,7 +66,7 @@ def probe_readout(net, z, token_ids, wte, mask=None, batch_size=512,
         tb = token_ids[i:i + batch_size].to(device)
         rec = net(zb.to(z.dtype))
         rec_n = rec / rec.norm(dim=-1, keepdim=True).clamp_min(1e-8)
-        sim = rec_n @ wte_n.t()                    # (B, T, V)
+        sim = rec_n @ wte_n.t().float()                    # (B, T, V)
         pred = sim.argmax(-1)
         top5v = sim.topk(5, dim=-1).indices
         m = (tb != -100).to(device)

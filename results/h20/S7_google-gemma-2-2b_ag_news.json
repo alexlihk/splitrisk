@@ -1,0 +1,29 @@
+{
+  "prereg": {
+    "purpose": "per-deployment anchor calibration (google/gemma-2-2b × ag_news)",
+    "seeds": 3,
+    "note": "full-info/ambient/floor; multi-seed mean per exp18b variance protocol (~7pp run-to-run)",
+    "probe_hidden": 4608
+  },
+  "result": {
+    "full_info_t1_mean": 0.8523524603563839,
+    "full_info_t1_std": 0.011335455586266956,
+    "full_info_t5_mean": 0.9599738433872814,
+    "ambient_pctx": 0.4494937556632392,
+    "floor": 0.7645904855321236,
+    "per_seed_t1": [
+      0.8367827366356057,
+      0.8568317802844532,
+      0.8634428641490927
+    ],
+    "hidden": 2304,
+    "n_layers": 26,
+    "model_type": "gemma2"
+  },
+  "verdict": "PASS — 錨點行可寫入 calibration/anchors.py",
+  "done": true,
+  "stage": "S7",
+  "model": "google/gemma-2-2b",
+  "corpus": "ag_news",
+  "minutes": 11.60129820505778
+}

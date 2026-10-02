@@ -1,0 +1,19 @@
+{
+  "prereg": {
+    "purpose": "SplitFed head-FedAvg simulation, K=4 clients, probe battery on global",
+    "acceptance": "runs end-to-end, per-client readouts recorded"
+  },
+  "result": {
+    "global_t1": 0.9653749231105027,
+    "global_t5": 0.9816258904299859,
+    "K": 4,
+    "rounds": 2,
+    "note": "head-FedAvg simulation (global head), tail shared"
+  },
+  "verdict": "PASS",
+  "done": true,
+  "stage": "S6",
+  "model": "gpt2",
+  "corpus": "ag_news",
+  "minutes": 4.244844933350881
+}

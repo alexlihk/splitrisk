@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "splitrisk"
-version = "0.2.1"
+version = "0.3.0"
 description = "Audit what your split model leaks — calibrated probe battery for representation-leakage measurement (SA-RI L1)"
 readme = "README.md"
 license = {text = "BSD-3-Clause"}

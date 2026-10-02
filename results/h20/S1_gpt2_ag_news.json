@@ -1,0 +1,16 @@
+{
+  "prereg": {
+    "purpose": "AutoSplitter parity+causal gates on real checkpoint",
+    "pass": "Δlogits<2e-2, Δprefix<1e-3"
+  },
+  "result": {
+    "parity_max_diff": 0.0,
+    "causal_leak_max": 0.0
+  },
+  "verdict": "PASS",
+  "done": true,
+  "stage": "S1",
+  "model": "gpt2",
+  "corpus": "ag_news",
+  "minutes": 0.1113115946451823
+}

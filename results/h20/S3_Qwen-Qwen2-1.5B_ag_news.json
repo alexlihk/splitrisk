@@ -1,0 +1,29 @@
+{
+  "prereg": {
+    "purpose": "per-deployment anchor calibration (Qwen/Qwen2-1.5B × ag_news)",
+    "seeds": 3,
+    "note": "full-info/ambient/floor; multi-seed mean per exp18b variance protocol (~7pp run-to-run)",
+    "probe_hidden": 3072
+  },
+  "result": {
+    "full_info_t1_mean": 0.9271867891255465,
+    "full_info_t1_std": 0.010285368568262943,
+    "full_info_t5_mean": 0.9759671170373867,
+    "ambient_pctx": 0.439685437438562,
+    "floor": 0.005192046728420556,
+    "per_seed_t1": [
+      0.9150195685094499,
+      0.9263673373060357,
+      0.940173461561154
+    ],
+    "hidden": 1536,
+    "n_layers": 28,
+    "model_type": "qwen2"
+  },
+  "verdict": "PASS — 錨點行可寫入 calibration/anchors.py",
+  "done": true,
+  "stage": "S3",
+  "model": "Qwen/Qwen2-1.5B",
+  "corpus": "ag_news",
+  "minutes": 3.3990583539009096
+}

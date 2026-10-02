@@ -1,0 +1,29 @@
+{
+  "prereg": {
+    "purpose": "per-deployment anchor calibration (/data/xuguangning/work/splitrisk/models/Llama-3.1-8B/ × ag_news)",
+    "seeds": 3,
+    "note": "full-info/ambient/floor; multi-seed mean per exp18b variance protocol (~7pp run-to-run)",
+    "probe_hidden": 8192
+  },
+  "result": {
+    "full_info_t1_mean": 0.019680777784338035,
+    "full_info_t1_std": 0.0,
+    "full_info_t5_mean": 0.057572835278450196,
+    "ambient_pctx": 0.46218706711368973,
+    "floor": 0.0,
+    "per_seed_t1": [
+      0.019680777784338035,
+      0.019680777784338035,
+      0.019680777784338035
+    ],
+    "hidden": 4096,
+    "n_layers": 32,
+    "model_type": "llama"
+  },
+  "verdict": "REVIEW — t1<0.85，人工判讀",
+  "done": true,
+  "stage": "S8",
+  "model": "/data/xuguangning/work/splitrisk/models/Llama-3.1-8B/",
+  "corpus": "ag_news",
+  "minutes": 9.026180827617646
+}

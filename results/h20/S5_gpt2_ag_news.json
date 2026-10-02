@@ -1,0 +1,63 @@
+{
+  "prereg": {
+    "purpose": "SL training-loop three-baseline audit (exp13 replication, productized)",
+    "acceptance": "SIA: acc normal + t1 high (R6); FSHA: acc collapse; honest: acc ~0.89/t1 ~0.94",
+    "alpha": 5.0,
+    "sl_steps_equiv_epochs": 1
+  },
+  "cells": {
+    "honest": {
+      "acc": 0.824999988079071,
+      "t1_ce": 0.9684505030061313,
+      "t5_ce": 0.9807925074905253,
+      "floor": 0.020378197114907633,
+      "pctx": 0.3111120108508614,
+      "extra": {
+        "baseline": "honest",
+        "alpha": 5.0,
+        "sl_train_loss": 0.5483776222273802,
+        "sl_hijack_loss": 91.83557979316468,
+        "sl_steps": 157
+      }
+    },
+    "sia": {
+      "acc": 0.8429999947547913,
+      "t1_ce": 0.9969641050062503,
+      "t5_ce": 0.9999801575490604,
+      "floor": 0.7743119630136714,
+      "pctx": 0.3111120108508614,
+      "extra": {
+        "baseline": "sia",
+        "alpha": 5.0,
+        "sl_train_loss": 104.82642365716825,
+        "sl_hijack_loss": 20.820676784606498,
+        "sl_steps": 157
+      }
+    },
+    "fsha": {
+      "acc": 0.1679999977350235,
+      "t1_ce": 0.9971426870647062,
+      "t5_ce": 0.9999206301962419,
+      "floor": 0.7784391928090958,
+      "pctx": 0.3111120108508614,
+      "extra": {
+        "baseline": "fsha",
+        "alpha": 5.0,
+        "sl_train_loss": 20.813558627845374,
+        "sl_hijack_loss": 20.813558627845374,
+        "sl_steps": 157
+      }
+    }
+  },
+  "checks": {
+    "SIA_stealth": true,
+    "FSHA_collapse": true,
+    "honest_high_recovery": true
+  },
+  "verdict": "PASS — R6 軸復現",
+  "done": true,
+  "stage": "S5",
+  "model": "gpt2",
+  "corpus": "ag_news",
+  "minutes": 6.612413334846496
+}

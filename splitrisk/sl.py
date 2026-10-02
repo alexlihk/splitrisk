@@ -31,7 +31,7 @@ class ClsHead(nn.Module):
     def forward(self, h, mask):
         idx = mask.long().sum(1).clamp_min(1) - 1
         rows = torch.arange(h.size(0), device=h.device)
-        return self.fc(h[rows, idx])
+        return self.fc(h[rows, idx].float())
 
 
 def _token_ce(z, ids, mask, wte):
@@ -45,8 +45,9 @@ def _token_ce(z, ids, mask, wte):
 
 
 def train_split(head, tail, cls, loader, wte, n_classes=None,
-                baseline="honest", alpha=5.0, epochs=1, lr_head=1e-4,
-                lr_server=1e-4, log_every=0, device="cpu", seed=0):
+                baseline="honest", alpha=5.0, epochs=1, lr_head=2e-5,
+                lr_server=1e-4, log_every=0, device="cpu", seed=0,
+                microbatch_size=None):
     """跑一個 SL 訓練環。返回 dict(train_loss, hijack_loss, task_acc_proxy,
     steps, baseline)。head/tail/cls 就地訓練（調用方先 deepcopy 要保留的）。"""
     assert baseline in BASELINES, baseline
@@ -55,13 +56,30 @@ def train_split(head, tail, cls, loader, wte, n_classes=None,
     head.train()
     tail.train()
     cls.train()
-    seen = {}
-    for mod, lr in ((head, lr_head), (tail, lr_server), (cls, lr_server)):
-        opt_mod = torch.optim.AdamW(
-            [p for p in mod.parameters() if p.requires_grad], lr=lr)
-        seen[id(mod)] = opt_mod
-    opt_hijack = torch.optim.AdamW(
-        [p for p in head.parameters() if p.requires_grad], lr=lr_head)
+    # v0.3.2: 撤銷 wte 凍結——battery demo.py 以 2e-5 全參（含 wte）
+    # finetune 後 probe 仍 0.94-0.97，此前「漂移」結論係探針欠訓練所致。
+    # 保留 joint optimizer + dedup（=demo 的 dict.fromkeys 模式）。
+    tail_params = {id(p): p for p in tail.parameters() if p.requires_grad}
+    cls_params = {id(p): p for p in cls.parameters() if p.requires_grad}
+    groups = []
+    head_only = [p for p in head.parameters()
+                 if p.requires_grad and id(p) not in tail_params
+                 and id(p) not in cls_params]
+    if head_only:
+        groups.append({"params": head_only, "lr": lr_head})
+    if tail_params:
+        groups.append({"params": list(tail_params.values()),
+                       "lr": lr_server})
+    if cls_params:
+        groups.append({"params": list(cls_params.values()), "lr": lr_server})
+    joint = torch.optim.AdamW(groups) if groups else None
+    opt_hijack = joint   # head 側更新器（honest=server 梯度回傳）
+    if microbatch_size is not None:
+        if microbatch_size < 1 or baseline != "honest":
+            raise ValueError("microbatch_size requires honest baseline and a positive size")
+        if any(id(p) in tail_params or id(p) in cls_params
+               for p in head.parameters()):
+            raise ValueError("microbatch accumulation requires disjoint client/server parameters")
     wte = wte.to(device)
     stats = {"train_loss": 0.0, "hijack_loss": 0.0, "steps": 0}
     cls.eval()
@@ -69,6 +87,58 @@ def train_split(head, tail, cls, loader, wte, n_classes=None,
         for ids, mask, y in loader:
             ids, mask = ids.to(device), mask.to(device)
             y = y.to(device)
+            if microbatch_size is not None:
+                # Preserve the original two optimizer steps per whole shard:
+                # server first, then client; each loss is weighted by shard size.
+                if joint is not None:
+                    joint.zero_grad()
+                client_grads = {}
+                task_sum = hij_sum = 0.0
+                token_count = int(mask.count_nonzero())
+                for start in range(0, len(ids), microbatch_size):
+                    bi = ids[start:start + microbatch_size]
+                    bm = mask[start:start + microbatch_size]
+                    by = y[start:start + microbatch_size]
+                    z = head(bi, bm)
+                    z_send = z.detach().requires_grad_(True)
+                    # Honest hijack CE is diagnostic only. Bound vocabulary
+                    # logits to one sequence, with the same token mean.
+                    with torch.no_grad():
+                        for row in range(len(bi)):
+                            count = int(bm[row].count_nonzero())
+                            if count:
+                                hij_sum += float(_token_ce(
+                                    z_send[row:row + 1], bi[row:row + 1],
+                                    bm[row:row + 1], wte)) * count
+                    h = tail.hidden_states(z_send, bm)
+                    loss = F.cross_entropy(cls(h, bm), by)
+                    weight = len(bi) / len(ids)
+                    (loss * weight).backward()
+                    task_sum += float(loss.detach()) * weight
+                    if z_send.grad is not None and joint is not None:
+                        z.backward(gradient=z_send.grad)
+                        for param in head_only:
+                            if param.grad is not None:
+                                if param not in client_grads:
+                                    client_grads[param] = param.grad
+                                else:
+                                    client_grads[param].add_(param.grad)
+                                param.grad = None
+                    del z, z_send, h, loss
+                if joint is not None:
+                    joint.step()
+                    joint.zero_grad()
+                    for param, grad in client_grads.items():
+                        param.grad = grad
+                    if client_grads:
+                        joint.step()
+                stats["train_loss"] += task_sum
+                stats["hijack_loss"] += hij_sum / max(1, token_count)
+                stats["steps"] += 1
+                if log_every and stats["steps"] % log_every == 0:
+                    print(f"    [sl:{baseline}] ep{ep+1} step{stats['steps']} "
+                          f"loss={task_sum:.4f} hij={hij_sum / max(1, token_count):.4f}")
+                continue
             # --- client: head 前向 ---
             z = head(ids, mask)
             # --- smash: 傳輸張量（detach + 開梯度）---
@@ -83,14 +153,13 @@ def train_split(head, tail, cls, loader, wte, n_classes=None,
                 server_loss = F.cross_entropy(logits, y)
                 if baseline == "sia":
                     server_loss = server_loss + alpha * hij
-            seen[id(tail)].zero_grad()
-            seen[id(cls)].zero_grad()
+            if joint is not None:
+                joint.zero_grad()
             server_loss.backward()
-            seen[id(tail)].step()
-            if baseline != "fsha":
-                seen[id(cls)].step()
+            if joint is not None:
+                joint.step()
             # --- 梯度回傳 client ---
-            if z_send.grad is not None:
+            if z_send.grad is not None and opt_hijack is not None:
                 opt_hijack.zero_grad()
                 z.backward(gradient=z_send.grad)
                 opt_hijack.step()

@@ -34,6 +34,25 @@ CALIBRATION_TABLE = {
     # audit() support list still requires gpt2-family heads (v0.3
     # adds the official-API Llama skeleton).
     ("llama-3.2-1b", "ag_news"): (0.934, 0.415, 0.037),
+    # ---- H20 S1-S8 錨點校準（2026-10-01，v0.3.3 協議，3 seeds）----
+    # H20 S2：P_ctx 0.4149 與 exp19 的 0.4148 逐位對位（跨協議互證）；
+    # t1 0.870 低於 exp19 的 0.934 屬探針預算差異（3 seeds 平均 vs 單跑），
+    # 按實測入表。H20 JSON：results/h20/S2_*.json。
+    ("meta-llama/Llama-3.2-1B", "ag_news"): (0.870, 0.415, 0.204),
+    # H20 S3：Qwen2-1.5B，3 seeds，floor 正常。
+    ("Qwen/Qwen2-1.5B", "ag_news"):         (0.927, 0.440, 0.005),
+    # H20 S7：Gemma-2-2b（config 切片 + 邊界 hook 之後首個 PASS）。
+    # floor 0.765 異常高（gemma 嵌入幾何特性，raw cosine 可讀性高），
+    # 意義＝gemma 系 ambient-ish raw floor，入表並標註待複核。
+    ("google/gemma-2-2b", "ag_news"):       (0.852, 0.449, 0.765),
+    # ---- REVIEW（未入表，按 per-deployment 誠實協議暫緩簽章）----
+    # S4 Mistral-7B-v0.1：t1=0.045、floor=0.0、P_ctx=0.517（健康）→
+    #   探針對 7B 級 z 不收斂，疑 massive-activation/NaN（z 衛生閘
+    #   v0.3.3 已加，重跑出診斷數據後再議）。
+    # S8 Llama-3.1-8B：t1=0.0197、3 seeds 逐位相同（探針退化為隨機初始化）、
+    #   floor=0.0 → 同上，z 含非有限值幾乎確定。
+    # 兩行 VERDICT=REVIEW，不得出簽章讀數；修復路徑＝z 衛生閘診斷 +
+    # 大模型探針協議（per-dim norm / sink 處理）。
 }
 
 ZERO_INFO_ANCHOR = 0.030            # collapsed codebook (mode floor)

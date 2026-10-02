@@ -18,8 +18,10 @@ from .probes.label_probe import label_audit
 from .vq.vq_cell import VQCell
 
 # 錨點表已校準、可簽章的模型（audit() 名稱路徑的白名單）
+# v0.3.1: 短名＋全名並列（H20 錨點跑用全名）
 SUPPORTED_MODELS = ("gpt2", "gpt2-medium", "gpt2-large",
-                    "llama-3.2-1b")
+                    "llama-3.2-1b", "meta-llama/Llama-3.2-1B",
+                    "google/gemma-2-2b", "meta-llama/Llama-3.1-8B", "mistralai/Mistral-7B-v0.1")
 
 
 def _device(device):
@@ -41,7 +43,11 @@ def auto_probe_hidden(model) -> int:
 def _config_of(model):
     if isinstance(model, str):
         from transformers import AutoConfig
-        return AutoConfig.from_pretrained(model)
+        import os
+        # v0.3.1: gated repo 需 token——走 HF_TOKEN 環境變數（安全紅線：
+        # token 永不硬編進檔案；外洩過的 token 必須撤銷而非內嵌）
+        return AutoConfig.from_pretrained(
+            model, token=os.environ.get("HF_TOKEN") or True)
     return model.config
 
 
@@ -87,7 +93,9 @@ def _encode(texts, tokenizer, max_len=64):
 # ------------------------------------------------------- split assets
 def _cache_split_reprs(head, input_ids, attention_mask, device,
                        batch_size=64):
-    """Cache split-point representations z = f_{1:s}(x)."""
+    """Cache split-point representations z = f_{1:s}(x).
+    v0.3.3: z 衛生閘——NaN/Inf/極端尺度直接 raise 並附統計（H20 S4/S8
+    的 probe 退化＝z 含非有限值；此閘讓下一輪重跑直接給出診斷數據）。"""
     head = head.to(device).eval()
     zs = []
     with torch.no_grad():
@@ -95,7 +103,20 @@ def _cache_split_reprs(head, input_ids, attention_mask, device,
             ids = input_ids[i:i + batch_size].to(device)
             am = attention_mask[i:i + batch_size].to(device)
             zs.append(head(ids, am).cpu())
-    return torch.cat(zs)
+    z = torch.cat(zs)
+    if not torch.isfinite(z).all():
+        n_nan = int(torch.isnan(z).sum())
+        n_inf = int(torch.isinf(z).sum())
+        raise ValueError(
+            f"z 衛生閘 FAIL：NaN×{n_nan} Inf×{n_inf}（shape={tuple(z.shape)}）"
+            f"——大模型前向數值溢出，先查 dtype/加載精度，勿以此 z 出數")
+    zmax = z.abs().max().item()
+    if zmax > 1e4:
+        import warnings
+        warnings.warn(
+            f"z 絕對值峰值 {zmax:.1f} > 1e4（大模型早期層 massive "
+            f"activation 特徵）——探針訓練可能不穩，讀數標 REVIEW")
+    return z
 
 
 @torch.no_grad()
@@ -120,11 +141,14 @@ def _ambient(full_model, input_ids, attention_mask, device,
 
 def _prepare(model, split_at, task, data, n_train, n_test, seed,
              device, head=None, labels=None, text_column=None,
-             label_column=None, max_len=64):
+             label_column=None, max_len=64, tokenizer=None):
     """Shared setup: model, tokenizer, encoded data, cached z.
     v0.3: AutoSplitter（gpt2 + llama 家族結構）；ambient 在微調「前」測
     （保證是 pretrained prior，不被共享權重微調污染）；分類任務建
-    ClsHead 任務橋（hidden states → 類別，非 vocab logits）。"""
+    ClsHead 任務橋（hidden states → 類別，非 vocab logits）。
+    v0.3.1 bugfix (H20 S2/S3/S4): tokenizer 必須是被審模型自己的——
+    硬編 gpt2 tokenizer 餵 llama/Mistral 會把 gpt2 id 灌進別家詞表
+    （Mistral 32k 詞表直接越界崩潰；Llama/Qwen 不崩但表徵全廢）。"""
     from transformers import AutoTokenizer
     from .sl import ClsHead
     dev = _device(device)
@@ -136,8 +160,14 @@ def _prepare(model, split_at, task, data, n_train, n_test, seed,
                 "ambient/parity）——probe_common.Head 自帶；自寫 head 請補")
     full = load_gpt2(model, device=dev) if isinstance(model, str) \
         else model.to(dev)
-    tok = AutoTokenizer.from_pretrained("gpt2")
-    tok.pad_token = tok.eos_token
+    if tokenizer is not None:
+        tok = tokenizer
+    else:
+        tok_src = model if isinstance(model, str) else getattr(
+            getattr(model, "config", None), "_name_or_path", "") or "gpt2"
+        tok = AutoTokenizer.from_pretrained(tok_src)
+    if tok.pad_token is None:
+        tok.pad_token = tok.eos_token
 
     texts_tr, texts_te, y_tr, y_te = _load_data(
         data, task, tok, n_train, n_test, text_column, label_column)
@@ -156,6 +186,12 @@ def _prepare(model, split_at, task, data, n_train, n_test, seed,
         head = head.to(dev)
         tail = AutoSplitter.load(full, split_at, device=dev)[1]
 
+    # v0.3.2 protocol fix（battery demo.py/exp13 對齊——S5 真兇）：
+    # probe 必須訓練在 TRAIN 側表徵（5000 樣本×bs32=312 步）、評估在
+    # test 側；此前 train_probe 在 z_te 上自我訓練（500 樣本×bs256=4 步）
+    # ＝欠訓練儀器，讀數 0.04-0.07。demo.py 順序＝finetune→z（錨點定義
+    # 本來就是 finetuned pipeline 的洩漏；此前「finetune 污染」判斷係
+    # 合成模板 mini 測試灌水所致，撤銷）。
     cls = None
     y_tr_t = y_te_t = None
     if task == "classification" and y_tr is not None:
@@ -166,11 +202,15 @@ def _prepare(model, split_at, task, data, n_train, n_test, seed,
         head, tail, cls = _finetune_task(head, tail, cls, ids_tr, am_tr,
                                          y_tr_t, dev, seed=seed)
 
+    z_tr = _cache_split_reprs(head, ids_tr, am_tr, dev)
+    tgt_tr = ids_tr.clone()
+    tgt_tr[am_tr == 0] = -100
     z_te = _cache_split_reprs(head, ids_te, am_te, dev)
     tgt_te = ids_te.clone()
     tgt_te[am_te == 0] = -100
     return dict(full=full, tok=tok, head=head, tail=tail, cls=cls, dev=dev,
                 ids_te=ids_te, am_te=am_te, z_te=z_te, tgt_te=tgt_te,
+                z_tr=z_tr, tgt_tr=tgt_tr, ids_tr=ids_tr, am_tr=am_tr,
                 y_te=y_te_t, n_layers=_n_layers(full),
                 wte=full.get_output_embeddings().weight, pctx=pctx)
 
@@ -266,7 +306,7 @@ def audit(model="gpt2", split_at=6, task="classification", data="ag_news",
 
     t1s, t5s = [], []
     for i in range(max(1, n_seeds)):
-        ce = train_probe(p["z_te"], p["tgt_te"], wte, mode="ce",
+        ce = train_probe(p["z_tr"], p["tgt_tr"], wte, mode="ce",
                          hidden=probe_hidden, epochs=epochs, lr=lr,
                          device=dev, seed=seed + 4321 + i)
         t1, t5 = probe_readout(ce, p["z_te"], p["tgt_te"], wte,
@@ -280,7 +320,7 @@ def audit(model="gpt2", split_at=6, task="classification", data="ag_news",
         extra["t1_std"] = float(np.std(t1s))
         extra["t5_std"] = float(np.std(t5s))
 
-    mse = train_probe(p["z_te"], p["tgt_te"], wte, mode="mse",
+    mse = train_probe(p["z_tr"], p["tgt_tr"], wte, mode="mse",
                       hidden=probe_hidden, epochs=epochs, lr=lr,
                       device=dev, seed=seed + 5678)
     t1_mse, _ = probe_readout(mse, p["z_te"], p["tgt_te"], wte,
@@ -336,13 +376,13 @@ def audit_vq(model="gpt2", split_at=6, task="classification",
     cells = {}
     for k in codebook_sizes:
         vq = VQCell(p["z_te"].shape[-1], k, seed=seed)
-        _, zq = vq.quantize(p["z_te"])
-        zq = zq.detach()
-        tgt_q = p["tgt_te"].clone()
-        net = train_probe(zq, tgt_q, wte, mode="ce", hidden=probe_hidden,
-                          epochs=epochs, lr=lr, device=dev, seed=seed)
-        t1, t5 = probe_readout(net, zq, tgt_q, wte, mask=p["am_te"],
-                               device=dev)
+        _, zq_tr = vq.quantize(p["z_tr"])
+        _, zq_te = vq.quantize(p["z_te"])
+        net = train_probe(zq_tr.detach(), p["tgt_tr"], wte, mode="ce",
+                          hidden=probe_hidden, epochs=epochs, lr=lr,
+                          device=dev, seed=seed)
+        t1, t5 = probe_readout(net, zq_te.detach(), p["tgt_te"], wte,
+                               mask=p["am_te"], device=dev)
         cells[k] = {"t1_ce": t1, "t5_ce": t5}
     primary_k = codebook_sizes[len(codebook_sizes) // 2]
     c = cells[primary_k]
@@ -373,23 +413,27 @@ def audit_sharded(model="gpt2", split_at=6, data="ag_news", n_shards=3,
     if probe_hidden is None:
         probe_hidden = auto_probe_hidden(model)
     wte = p["wte"]
-    z, tgt, am = p["z_te"], p["tgt_te"], p["am_te"]
-    n, t, d = z.shape
+    z_te, tgt_te, am_te = p["z_te"], p["tgt_te"], p["am_te"]
+    z_tr, tgt_tr = p["z_tr"], p["tgt_tr"]
+    n, t, d = z_te.shape
     shard_len = t // n_shards
     single = {}
     for s in range(n_shards):
         sl = slice(s * shard_len, (s + 1) * shard_len)
-        zs, ts, as_ = z[:, sl], tgt[:, sl], am[:, sl]
+        zs_tr, ts_tr = z_tr[:, sl], tgt_tr[:, sl]
+        zs_te, ts_te, as_te = z_te[:, sl], tgt_te[:, sl], am_te[:, sl]
         if vq_bits:
             vq = VQCell(d, 2 ** vq_bits, seed=seed)
-            _, zs = vq.quantize(zs)
-            zs = zs.detach()
-        net = train_probe(zs, ts, wte, mode="ce", hidden=probe_hidden,
+            _, zs_tr = vq.quantize(zs_tr)
+            _, zs_te = vq.quantize(zs_te)
+            zs_tr, zs_te = zs_tr.detach(), zs_te.detach()
+        net = train_probe(zs_tr, ts_tr, wte, mode="ce", hidden=probe_hidden,
                           epochs=epochs, lr=lr, device=dev, seed=seed)
-        t1, t5 = probe_readout(net, zs, ts, wte, mask=as_, device=dev)
+        t1, t5 = probe_readout(net, zs_te, ts_te, wte, mask=as_te,
+                               device=dev)
         single[f"shard_{s}"] = {"t1_ce": t1, "t5_ce": t5}
     # collusive ceiling: context-aware reassembler over ALL positions
-    net, coll = train_reassembler(z, tgt, wte.shape[0], wte=wte,
+    net, coll = train_reassembler(z_te, tgt_te, wte.shape[0], wte=wte,
                                   n_layers=3, epochs=epochs, device=dev,
                                   seed=seed)
     return AuditResult(
@@ -421,13 +465,14 @@ def audit_training(delivered_model, reference_data, task="classification",
                  seed=seed, device=dev)
     if probe_hidden is None:
         probe_hidden = max(2048, 2 * p["z_te"].shape[-1])
-    net = train_probe(p["z_te"], p["tgt_te"], p["wte"], mode="ce",
+    net = train_probe(p["z_tr"], p["tgt_tr"], p["wte"], mode="ce",
                       hidden=probe_hidden, epochs=epochs, lr=lr,
                       device=dev, seed=seed)
     t1, t5 = probe_readout(net, p["z_te"], p["tgt_te"], p["wte"],
                            mask=p["am_te"], device=dev)
-    acc = _task_acc(p["tail"], p["z_te"], p["y_te"], dev) \
-        if p["y_te"] is not None else None
+    acc = _task_acc(p["tail"], p["cls"], p["z_te"], p["am_te"], p["y_te"],
+                    dev) if (p["y_te"] is not None and p["cls"]
+                             is not None) else None
     stealth = acc is not None and acc > 0.8 and t1 > 0.85
     return AuditResult(
         model=str(delivered_model), split_at=split_at, task=task, seed=seed,
@@ -442,7 +487,7 @@ def audit_training(delivered_model, reference_data, task="classification",
 
 
 def audit_sl(model="gpt2", split_at=6, data="ag_news", baseline="honest",
-             alpha=5.0, sl_epochs=1, sl_lr_head=1e-4, sl_lr_server=1e-4,
+             alpha=5.0, sl_epochs=1, sl_lr_head=2e-5, sl_lr_server=2e-5,
              n_train=5000, n_test=1000, seed=1006, probe_hidden=None,
              att_epochs=2, device=None, n_seeds=1):
     """SL 訓練環審計（exp13 產品化）：跑 honest/sia/fsha 訓練環後對傳輸
@@ -481,11 +526,14 @@ def audit_sl(model="gpt2", split_at=6, data="ag_news", baseline="honest",
     head_sl.eval()
     tail_sl.eval()
     cls_sl.eval()
+    z_sl_tr = _cache_split_reprs(head_sl, p["ids_tr"], p["am_tr"], dev)
+    tgt_sl_tr = p["ids_tr"].clone()
+    tgt_sl_tr[p["am_tr"] == 0] = -100
     z_te = _cache_split_reprs(head_sl, p["ids_te"], p["am_te"], dev)
     tgt_te = p["tgt_te"]
     t1s, t5s = [], []
     for i in range(max(1, n_seeds)):
-        net = train_probe(z_te, tgt_te, wte, mode="ce",
+        net = train_probe(z_sl_tr, tgt_sl_tr, wte, mode="ce",
                           hidden=probe_hidden, epochs=att_epochs,
                           device=dev, seed=seed + 4321 + i)
         t1, t5 = probe_readout(net, z_te, tgt_te, wte, mask=p["am_te"],
@@ -522,7 +570,7 @@ def _measure_anchors(model="gpt2", corpus="ag_news", device=None,
     p = _prepare(model, split_at, "classification", corpus, n_test,
                  n_test, seed, device)
     dev = p["dev"]
-    net = train_probe(p["z_te"], p["tgt_te"], p["wte"], mode="ce",
+    net = train_probe(p["z_tr"], p["tgt_tr"], p["wte"], mode="ce",
                       hidden=auto_probe_hidden(model), epochs=2,
                       device=dev, seed=seed)
     t1, _ = probe_readout(net, p["z_te"], p["tgt_te"], p["wte"],

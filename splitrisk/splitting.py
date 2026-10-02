@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import copy
 import torch
 import torch.nn as nn
 
@@ -27,7 +28,11 @@ class _LlamaStyleHead(nn.Module):
 
     def __init__(self, full, s):
         super().__init__()
-        self.inner = type(full.model)(full.config)
+        config = copy.deepcopy(full.config)
+        config.num_hidden_layers = s
+        if getattr(config, "layer_types", None) is not None:
+            config.layer_types = config.layer_types[:s]
+        self.inner = type(full.model)(config)
         self.inner.embed_tokens = full.model.embed_tokens
         if hasattr(full.model, "rotary_emb"):
             self.inner.rotary_emb = full.model.rotary_emb
@@ -51,21 +56,49 @@ class _LlamaStyleTail(nn.Module):
 
     def __init__(self, full, s):
         super().__init__()
-        self.inner = type(full.model)(full.config)
+        config = copy.deepcopy(full.config)
+        config.num_hidden_layers = len(full.model.layers) - s
+        if getattr(config, "layer_types", None) is not None:
+            config.layer_types = config.layer_types[s:]
+        self.inner = type(full.model)(config)
         self.inner.embed_tokens = full.model.embed_tokens
         if hasattr(full.model, "rotary_emb"):
             self.inner.rotary_emb = full.model.rotary_emb
         self.inner.layers = full.model.layers[s:]
         self.inner.norm = full.model.norm           # 訓練過的 final norm
         self.lm_head = full.lm_head
+        self._gemma = full.config.model_type in {"gemma", "gemma2"}
 
     def hidden_states(self, z, attention_mask=None):
-        out = self.inner(inputs_embeds=z, attention_mask=attention_mask,
-                         use_cache=False)
+        # Older Gemma forwards scale inputs_embeds too. At the split boundary
+        # z is already a residual-stream activation, not a token embedding.
+        # Restore it exactly at the first retained block; this also works with
+        # newer versions whose scaling lives inside embed_tokens, and keeps
+        # the official RoPE/mask preparation and autograd intact.
+        hook = None
+        if self._gemma:
+            def restore_boundary(module, args, kwargs):
+                if args:
+                    return (z,) + args[1:], kwargs
+                return args, {**kwargs, "hidden_states": z}
+            hook = self.inner.layers[0].register_forward_pre_hook(
+                restore_boundary, with_kwargs=True)
+        try:
+            out = self.inner(inputs_embeds=z, attention_mask=attention_mask,
+                             use_cache=False)
+        finally:
+            if hook is not None:
+                hook.remove()
         return out.last_hidden_state
 
     def forward(self, z, attention_mask=None):
-        return self.lm_head(self.hidden_states(z, attention_mask))
+        logits = self.lm_head(self.hidden_states(z, attention_mask))
+        cap = getattr(self.inner.config, "final_logit_softcapping", None)
+        if cap is not None:
+            logits = logits / cap
+            logits = torch.tanh(logits)
+            logits = logits * cap
+        return logits
 
 
 class AutoSplitter:

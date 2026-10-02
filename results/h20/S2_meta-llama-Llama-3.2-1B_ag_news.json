@@ -1,0 +1,29 @@
+{
+  "prereg": {
+    "purpose": "per-deployment anchor calibration (meta-llama/Llama-3.2-1B × ag_news)",
+    "seeds": 3,
+    "note": "full-info/ambient/floor; multi-seed mean per exp18b variance protocol (~7pp run-to-run)",
+    "probe_hidden": 4096
+  },
+  "result": {
+    "full_info_t1_mean": 0.8702774333641665,
+    "full_info_t1_std": 0.0055825994698054165,
+    "full_info_t5_mean": 0.9550359830220491,
+    "ambient_pctx": 0.41490835357651923,
+    "floor": 0.20357796540119266,
+    "per_seed_t1": [
+      0.8626281710653205,
+      0.8757946114030426,
+      0.8724095176241365
+    ],
+    "hidden": 2048,
+    "n_layers": 16,
+    "model_type": "llama"
+  },
+  "verdict": "PASS — 錨點行可寫入 calibration/anchors.py",
+  "done": true,
+  "stage": "S2",
+  "model": "meta-llama/Llama-3.2-1B",
+  "corpus": "ag_news",
+  "minutes": 3.1713865955670673
+}
