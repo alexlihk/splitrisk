@@ -82,8 +82,9 @@ class Probe7B(nn.Module):
         return self.net(z)
 
 
-def train_probe(z_tr, tgt_tr, wte, epochs=2, lr=1e-3, bs=32, device="cpu"):
-    torch.manual_seed(1006)
+def train_probe(z_tr, tgt_tr, wte, epochs=2, lr=1e-3, bs=32, device="cpu",
+                seed=1006):
+    torch.manual_seed(seed)
     dim = z_tr.shape[-1]
     net = Probe7B(dim).to(device)
     opt = torch.optim.Adam(net.parameters(), lr=lr)
@@ -250,7 +251,8 @@ def main():
             for seed in range(3):
                 torch.manual_seed(1006 + seed)
                 net = train_probe(zt.float(), tt_tr, wte,
-                                  epochs=args.epochs, device=dev)
+                                  epochs=args.epochs, device=dev,
+                                  seed=1006 + seed)
                 t1, t5 = eval_probe(net, ze.float(), tt, wte, ae, device=dev)
                 t1s.append(t1); t5s.append(t5)
 
