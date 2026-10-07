@@ -1,6 +1,6 @@
-# 7B 探針再校準 — 執行指引（v1.0，2026-10-02）
+# PROBE7B_GUIDE v2 — 第二期（一次全跑，零互動）
 
-趙博：兩個命令，跑完回傳 JSON。不需要改任何代碼。
+趙博：老規矩，git pull 之後跑 4 條命令，跑完回傳 4 個 JSON。不需要改任何代碼。
 
 ## 前置
 
@@ -9,47 +9,29 @@ cd /data/xuguangning/work/splitrisk
 git pull origin main
 ```
 
-## 執行（兩條命令）
+## 執行（4 條命令，順序不限，可掛著跑）
 
 ```bash
-# S4: Mistral-7B（~2-3h，bf16 自動）
-python scripts/probe7b_batch.py --model mistralai/Mistral-7B-v0.1
-
-# S8: Llama-3.1-8B（本地路徑，~2-3h）
-python scripts/probe7b_batch.py --model /data/xuguangning/work/splitrisk/models/Llama-3.1-8B/
+python scripts/probe7b_batch2.py --model mistralai/Mistral-7B-v0.1
+python scripts/probe7b_batch2.py --model /data/xuguangning/work/splitrisk/models/Llama-3.1-8B/
+python scripts/probe7b_batch2.py --model Qwen/Qwen2-1.5B
+python scripts/probe7b_batch2.py --model google/gemma-2-2b
 ```
 
-**建議先跑縮樣驗證**（~15 分鐘，確認管道通）：
+跑完把 `results/h20/` 下**新生成的 4 個 `probe7b2_*.json`** 發回來即可。
 
-```bash
-python scripts/probe7b_batch.py --model mistralai/Mistral-7B-v0.1 \
-  --n-train 500 --n-test 200
-```
+## 說明
 
-縮樣跑通再跑全量。
+- 每條命令跑完會印一行 `★` 開頭的結論，JSON 裡也有 `verdict` 欄位。
+- 預計時長：Mistral 約 40 分鐘、Llama-8B 約 60 分鐘、Qwen 約 10 分鐘、Gemma 約 15 分鐘（合計 2–2.5 小時）。
+- 每條命令含兩段：註冊預算重跑（5 候選×3 seeds）＋預算階梯（per_dim_norm / clip_z，6/12 epochs），全自動，中間不用管。
 
-## 看結果
+## 常見問題
 
-每個候選會打印 `PASS` 或 `FAIL`：
-- **任一候選 PASS**（t1 > P_ctx + 0.15）= 7B 錨點分離成功 → 回傳 JSON
-- **全部 FAIL** = 儀器邊界確認 → 也回傳 JSON（診斷數據）
+| 症狀 | 處理 |
+|---|---|
+| 第 3/4 條報 403 或下載失敗 | 把 `--model` 換成你本地已有的對應模型路徑即可 |
+| 中途 OOM | 那條命令加 `--n-train 3000` 重跑 |
+| 其他報錯 | 直接截圖發來，不要自己修 |
 
-兩個都跑完後，把這兩個檔案發回來：
-```
-results/h20/probe7b_mistralai-Mistral-7B-v0.1.json
-results/h20/probe7b_-data-xuguangning-work-splitrisk-models-Llama-3.1-8B-.json
-```
-
-## 技術細節（不需要動）
-
-- 模型自動 bf16 加載（CUDA）/ fp32（CPU）
-- 5 個候選：baseline / per-dim 標準化 / clip-z / sink-token 排除 / 組合
-- 每候選 3 seeds，錨點分離判定內建（t1 > P_ctx + 0.15）
-- 縮樣模式：`--n-train 500 --n-test 200`
-- GPU 顯存：Mistral-7B bf16 ~14.5GB（4090/H20 均可）
-
-## 異常處理
-
-- CUDA OOM → 加 `--n-train 1000`（減半訓練量）
-- HF 401/403 → `export HF_TOKEN=<token>`
-- 任何其他錯誤 → 截圖發回，不要自己修
+（第一期 probe7b_*.json 的多 seed 欄位有 bug，第二期腳本已修——不用做任何額外操作，直接跑第二期就是對的。）
