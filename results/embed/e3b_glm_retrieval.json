@@ -1,0 +1,16 @@
+{
+  "attacker_model": "pool-retrieval (cosine top-1)",
+  "n": 500,
+  "n_pool": 10000,
+  "token_f1_mean": 0.3497970328016177,
+  "token_f1_std": 0.13714842737298014,
+  "floor_random_pairing_f1": 0.14668337920851077,
+  "excess_over_floor": 0.20311365359310696,
+  "mean_top1_cosine": 0.6824636459350586,
+  "budget": {
+    "n_queries": 10500,
+    "note": "all embedding-API queries = attacker cost, honest disclosure"
+  },
+  "model": "embedding-3",
+  "note": "retrieval attack = needle-in-haystack attacker; floor computed in-run by random pairing (same unit)"
+}

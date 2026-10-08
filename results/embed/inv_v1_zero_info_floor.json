@@ -1,0 +1,6 @@
+{
+  "phase1_zero_info_f1_mean": 0.16645659301769195,
+  "phase1_zero_info_f1_std": 0.07736360771784569,
+  "n": 120,
+  "note": "floor protocol = E1 zero-info (random vectors vs paired originals)"
+}

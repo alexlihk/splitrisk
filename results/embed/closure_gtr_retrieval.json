@@ -1,0 +1,16 @@
+{
+  "attacker_model": "pool-retrieval (cosine top-1)",
+  "n": 500,
+  "n_pool": 10000,
+  "token_f1_mean": 0.35266611424565675,
+  "token_f1_std": 0.1442302772585102,
+  "floor_random_pairing_f1": 0.14668337920851077,
+  "excess_over_floor": 0.20598273503714598,
+  "mean_top1_cosine": 0.7760423421859741,
+  "budget": {
+    "n_queries": 0,
+    "note": "no API queries - local model; attacker cost = compute"
+  },
+  "model": "sentence-transformers/gtr-t5-base (local, closure 2nd instrument)",
+  "note": "retrieval attack = needle-in-haystack attacker; floor computed in-run by random pairing (same unit)"
+}

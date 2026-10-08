@@ -1,0 +1,12 @@
+{
+  "base_model": "t5-base",
+  "n_train": 50000,
+  "epochs": 2,
+  "eval_n": 500,
+  "eval_beam": 4,
+  "token_f1_mean": 0.3413229897143854,
+  "token_f1_std": 0.13289157862610038,
+  "final_loss": 2.7658606576919555,
+  "minutes": 14.656284165382385,
+  "note": "Phase 1 inversion model (no corrector); dry-run = pseudo vectors, NOT a measurement"
+}

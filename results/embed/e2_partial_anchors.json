@@ -1,0 +1,22 @@
+{
+  "zero_info_note": "hallucination floor - fluent irrelevant text on random vectors (NOT zero)",
+  "zero_info_samples": [
+    "of my song \"Caolinai\" translated into English, I made a new  a  a  directed to",
+    "of the Oswesters in King Bailey Style, hit the friendly rugby. It was a great treaty to have a lot of a",
+    "in a giant tailball helmet equipped with special protection to withstand possible collisions between son and daughter at",
+    "new style of the Big Apple series that has a lot to do with the money of the \"justification\" section of the logo. Whethe",
+    "that have a family name      . Usually, a -long series (originally",
+    "children until the first injection. Another modified protein \"lipid\" senzati senzati senzati senzati senzati senzati sen",
+    "visit - 'Make lopse' - 'close'). Parts of this are similar to those in his book \"\"",
+    "the Agricultural and Trading Co., which is still a little bit too rich. The alternative to the pillowing was a variety o",
+    "at the last United States Army and Navy Buildings—even though the woman who had previously been bitten by a guise of Pri",
+    "to be a somewhat unspecified spelling. The game Prismology received this buildup to a TCA review. Gameplay: a"
+  ],
+  "ambient_distilgpt2_next_token_top1": 0.2390773445367813,
+  "n_zero_info": 120,
+  "n_ambient": 120,
+  "budget": {
+    "num_steps": 2,
+    "sequence_beam_width": 1
+  }
+}
