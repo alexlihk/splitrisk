@@ -82,6 +82,11 @@ def main():
     PREREG["budget"] = {"num_steps": args.num_steps,
                         "sequence_beam_width": args.beam}
     PREREG["n"] = args.n
+    # beam-width memory guard (T4 14.5GB; bug ledger #2): effective
+    # sequences = batch × beam — keep ≤ 32 (beam-4 OOMs at batch 32)
+    args.batch = max(8, min(args.batch, 32 // max(1, args.beam)))
+    print(f"[batch] effective batch={args.batch} (beam={args.beam})",
+          flush=True)
     t0 = time.time()
     print("[prereg]", json.dumps(PREREG, ensure_ascii=False), flush=True)
 
