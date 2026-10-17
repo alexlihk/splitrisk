@@ -26,7 +26,7 @@
 輸出：JSON 含 per_sample_f1 ＋ per_text_token_lengths（本 run 內直出，
       免去 bucket_analysis 的離線重算）＋corpus/seed 標籤。
 """
-import argparse, json, os, random, sys, time, traceback
+import argparse, json, os, random, shutil, sys, time, traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from colab_embed_e1 import (dump, selfheal_vec2text, selfinstall_deps,
@@ -73,6 +73,9 @@ def main():
     ap.add_argument("--beam", type=int, default=1)
     ap.add_argument("--batch", type=int, default=32)
     ap.add_argument("--out", default="")
+    ap.add_argument("--copy-to", default="",
+                    help="copy finished JSON here (e.g. Drive path) — /content "
+                         "is ephemeral; always copy to Drive")
     args = ap.parse_args()
     if not args.out:
         args.out = (f"/content/e1_{args.corpus}_s{args.seed}"
@@ -163,6 +166,12 @@ def main():
           f"token-F1={res['result']['token_f1_mean']:.4f}"
           f"±{res['result']['token_f1_std']:.4f} → [saved] {args.out}"
           f" ({res['minutes']} min)")
+
+    if args.copy_to:
+        os.makedirs(args.copy_to, exist_ok=True)
+        dst = os.path.join(args.copy_to, os.path.basename(args.out))
+        shutil.copyfile(args.out, dst)
+        print(f"[copied] {dst}")
 
 
 if __name__ == "__main__":
