@@ -29,7 +29,7 @@ for corpus, mode, steps, beam in runs:
      uniform-random 向量的地板對比——回應「地板是不是向量分佈造成的」。
 輸出：JSON 含 floor F1 mean±sd＋逐樣本分數。
 """
-import argparse, json, os, random, sys, time, traceback
+import argparse, json, os, random, shutil, sys, time, traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from colab_embed_e1 import (dump, selfheal_vec2text, selfinstall_deps,
@@ -101,6 +101,9 @@ def main():
     ap.add_argument("--beam", type=int, default=1)
     ap.add_argument("--batch", type=int, default=32)
     ap.add_argument("--out", default="")
+    ap.add_argument("--copy-to", default="",
+                    help="copy finished JSON here (Drive) — /content is "
+                         "ephemeral")
     args = ap.parse_args()
     args.batch = max(8, min(args.batch, 32 // max(1, args.beam)))
 
@@ -185,6 +188,11 @@ def main():
     print(f"★ floor {args.corpus}/{args.input_mode} "
           f"F1={res['result']['floor_f1_mean']:.4f}"
           f"±{res['result']['floor_f1_std']:.4f} → [saved] {args.out}")
+    if args.copy_to:
+        os.makedirs(args.copy_to, exist_ok=True)
+        dst = os.path.join(args.copy_to, os.path.basename(args.out))
+        shutil.copyfile(args.out, dst)
+        print(f"[copied] {dst}")
 
 
 if __name__ == "__main__":
